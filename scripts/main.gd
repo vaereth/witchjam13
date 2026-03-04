@@ -1,0 +1,118 @@
+extends Node2D
+
+var current_wave: int = 1
+var score: int = 0
+var enemies_per_wave: int = 8
+var enemies_spawned: int = 0
+var enemies_cleared: int = 0
+
+var _switch_prev: bool = false
+var _restart_prev: bool = false
+
+@onready var gate: Area2D = $Gate
+@onready var ui: CanvasLayer = $UI
+@onready var spawn_timer: Timer = $SpawnTimer
+@onready var enemy_scene: PackedScene = preload("res://scenes/enemy.tscn")
+
+func _ready() -> void:
+	randomize()
+
+	spawn_timer.timeout.connect(_on_spawn_timer_timeout)
+	gate.enemy_blocked.connect(_on_enemy_blocked)
+	gate.enemy_passed.connect(_on_enemy_passed)
+	gate.gate_switched.connect(_on_gate_switched)
+
+	ui.update_score(score)
+	ui.update_wave(current_wave)
+	ui.update_polarity(gate.current_polarity)
+	ui.update_last_event("OSTATNIO: start")
+
+	start_wave(current_wave)
+
+func _process(_delta: float) -> void:
+	var switch_now := _is_switch_pressed()
+	if switch_now and not _switch_prev:
+		gate.switch_gate()
+	_switch_prev = switch_now
+
+	var restart_now := _is_restart_pressed()
+	if restart_now and not _restart_prev:
+		get_tree().reload_current_scene()
+	_restart_prev = restart_now
+
+func _is_switch_pressed() -> bool:
+	if InputMap.has_action("switch_polarity"):
+		return Input.is_action_pressed("switch_polarity")
+	return Input.is_key_pressed(KEY_SPACE)
+
+func _is_restart_pressed() -> bool:
+	if InputMap.has_action("restart"):
+		return Input.is_action_pressed("restart")
+	return Input.is_key_pressed(KEY_R)
+
+func start_wave(wave: int) -> void:
+	enemies_spawned = 0
+	enemies_cleared = 0
+	enemies_per_wave = 6 + wave * 2
+
+	spawn_timer.wait_time = max(0.5, 1.25 - wave * 0.1)
+	spawn_timer.start()
+
+func _on_spawn_timer_timeout() -> void:
+	if enemies_spawned >= enemies_per_wave:
+		spawn_timer.stop()
+		if enemies_cleared >= enemies_per_wave:
+			_next_wave()
+		return
+
+	spawn_enemy()
+
+func spawn_enemy() -> void:
+	var enemy = enemy_scene.instantiate()
+
+	var roll := randi() % 10
+	if current_wave <= 2:
+		enemy.type = "A" if randi() % 2 == 0 else "B"
+	elif current_wave <= 4:
+		enemy.type = "A" if roll < 5 else "B"
+	else:
+		if roll < 2:
+			enemy.type = "N"
+		elif roll < 6:
+			enemy.type = "A"
+		else:
+			enemy.type = "B"
+
+	enemy.speed = 110.0 + current_wave * 18.0
+	enemy.position = Vector2(1220, randf_range(200, 520))
+	add_child(enemy)
+
+	enemies_spawned += 1
+	enemy.tree_exited.connect(_on_enemy_removed)
+
+func _on_enemy_removed() -> void:
+	enemies_cleared += 1
+	if enemies_spawned >= enemies_per_wave and enemies_cleared >= enemies_per_wave:
+		_next_wave()
+
+func _next_wave() -> void:
+	current_wave += 1
+	ui.update_wave(current_wave)
+	await get_tree().create_timer(1.1).timeout
+	start_wave(current_wave)
+
+func _on_enemy_blocked(points: int) -> void:
+	score += points
+	ui.update_score(score)
+	ui.update_last_event("OSTATNIO: +" + str(points) + " (dobry blok)")
+
+func _on_enemy_passed(points_loss: int) -> void:
+	score += points_loss
+	ui.update_score(score)
+	if points_loss == -8:
+		ui.update_last_event("OSTATNIO: -8 (neutralny przeszedl)")
+	else:
+		ui.update_last_event("OSTATNIO: " + str(points_loss) + " (zla polaryzacja)")
+
+func _on_gate_switched(new_polarity: String) -> void:
+	ui.update_polarity(new_polarity)
